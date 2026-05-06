@@ -1,24 +1,25 @@
+#include "include/Client.h"
 #include <iostream>
 #include <string>
 #include <thread>
-#include "include/Client.h"
-
-#pragma comment(lib, "ws2_32.lib")
 
 int main() {
-	Client ChatClient{};
+  Client chatClient{};
 
-	std::wstring AddressInput;
-	std::cout << "Enter IP Address of the Server: ";
-	std::getline(std::wcin, AddressInput);
-	const wchar_t* WCharAddress = AddressInput.c_str();
+  std::string addressInput;
+  std::cout << "Enter IP Address of the Server: ";
+  std::getline(std::cin, addressInput);
 
-	ChatClient.ConnectToServer(WCharAddress, 17000U);
-	
-	std::thread SendThread{ &Client::SendMessages, &ChatClient };
-	std::thread ReceiveThread{ &Client::ReceiveMessages, &ChatClient };
+  std::string portInput;
+  std::cout << "Enter Port of the Server: ";
+  std::getline(std::cin, portInput);
+  uint16_t port = static_cast<uint16_t>(std::stoul(portInput));
 
-	SendThread.join();
-	ReceiveThread.join();
-	std::cin.get();
+  chatClient.ConnectToServer(addressInput.c_str(), port);
+
+  std::thread sendThread{&Client::SendMessages, &chatClient};
+  std::thread receiveThread{&Client::ReceiveMessages, &chatClient};
+
+  sendThread.join();
+  receiveThread.join();
 }

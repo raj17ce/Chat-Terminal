@@ -1,133 +1,150 @@
-#include "include/Server.h"
-#include <thread>
+#include "inc/Server.h"
 #include <algorithm>
+#include <cerrno>
 #include <iostream>
+#include <thread>
 #include <utility>
+#include <vector>
 
-void Server::Listen(const WCHAR* IPAddress, u_short PORT) {
-	CreateSocket();
-	CreateSocketAddress(IPAddress, PORT);
-	BindAddressToSocket();
+void Server::Listen(const char *ipAddress, uint16_t port) {
+  _createSocket();
+  _createSocketAddress(ipAddress, port);
+  _bindAddressToSocket();
 
-	if (listen(Socket, SOMAXCONN) == SOCKET_ERROR) {
-		std::cout << "Socket Listening failed..." << std::endl;
-		CloseProgram();
-	}
+  if (listen(_socket, SOMAXCONN) == -1) {
+    std::cout << "Socket Listening failed..." << std::endl;
+    _closeProgram();
+  }
 
-	std::cout << "Server Started Listening On Port : " << PORT << std::endl;
+  std::cout << "Server Started Listening On Port : " << port << std::endl;
 }
 
-SOCKET Server::AcceptClient() {
-	SOCKET ClientSocket = accept(Socket, nullptr, nullptr);
+int Server::AcceptClient() {
+  int clientSocket = accept(_socket, nullptr, nullptr);
 
-	if (ClientSocket == INVALID_SOCKET) {
-		std::cout << "Accepting Client failed..." << std::endl;
-		return -1;
-	}
+  if (clientSocket == -1) {
+    std::cout << "Accepting Client failed..." << std::endl;
+    return -1;
+  }
 
-	char Buffer[4096];
-	int BytesReceived = recv(ClientSocket, Buffer, sizeof(Buffer), 0);
+  char buffer[4096];
+  int bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
 
-	if (BytesReceived <= 0) {
-		int errorCode = WSAGetLastError();
-		std::cout << "Client Connection Closed..." << std::endl;
-		closesocket(ClientSocket);
-	}
+  if (bytesReceived <= 0) {
+    std::cout << "Client Connection Closed..." << std::endl;
+    close(clientSocket);
+    return -1;
+  }
 
-	std::string Name(Buffer, BytesReceived);
-	ActiveClients.insert({ ClientSocket, Name });
+  std::string name(buffer, bytesReceived);
 
-	std::cout << "Connection Established with " << Name << "..." << std::endl;
+  {
+    std::lock_guard<std::mutex> lock(_clientsMutex);
+    _activeClients.insert({clientSocket, name});
+  }
 
-	/*std::thread ReceiveThread(&Server::ReceiveMessages, this, ClientSocket);
-	ReceiveThread.detach();*/
-	Pool.ExecuteTask(std::bind(&Server::ReceiveMessages, this, std::placeholders::_1), ClientSocket);
+  std::cout << "Connection Established with " << name << "..." << std::endl;
 
-	return ClientSocket;
+  _pool.ExecuteTask(
+      std::bind(&Server::ReceiveMessages, this, std::placeholders::_1),
+      clientSocket);
+
+  return clientSocket;
 }
 
-void Server::CloseClient(SOCKET Client) {
-	closesocket(Client);
-	auto it = ActiveClients.find(Client);
-	if (it != ActiveClients.end()) {
-		ActiveClients.erase(it);
-	}
+void Server::CloseClient(int client) {
+  close(client);
+  std::lock_guard<std::mutex> lock(_clientsMutex);
+  auto it = _activeClients.find(client);
+  if (it != _activeClients.end()) {
+    _activeClients.erase(it);
+  }
 }
 
-void Server::ReceiveMessages(SOCKET Client) {
-	char Buffer[4096];
+void Server::ReceiveMessages(int client) {
+  char buffer[4096];
 
-	while (true) {
-		int BytesReceived = recv(Client, Buffer, sizeof(Buffer), 0);
+  while (true) {
+    int bytesReceived = recv(client, buffer, sizeof(buffer), 0);
 
-		if (BytesReceived <= 0) {
-			int errorCode = WSAGetLastError();
-			std::cout << "Connection With " << ActiveClients[Client] << " is Closed..." << std::endl;
-			CloseClient(Client);
-			break;
-		}
+    if (bytesReceived <= 0) {
+      {
+        std::lock_guard<std::mutex> lock(_clientsMutex);
+        std::cout << "Connection With " << _activeClients[client]
+                  << " is Closed..." << std::endl;
+      }
+      CloseClient(client);
+      break;
+    }
 
-		std::string TempMessage(Buffer, BytesReceived);
-		std::string Message = ActiveClients[Client] + " : " + TempMessage;
-		std::cout<< Message <<std::endl;
+    std::string tempMessage(buffer, bytesReceived);
+    std::string message;
 
-		for (const auto& TempClient : ActiveClients) {
-			if (TempClient.first != Client) {
-				int ReturnCode = send(TempClient.first, Message.c_str(), Message.length(), 0);
+    {
+      std::lock_guard<std::mutex> lock(_clientsMutex);
+      message = _activeClients[client] + " : " + tempMessage;
+    }
 
-				if (ReturnCode == SOCKET_ERROR) {
-					std::cout << "Sending message to " + TempClient.second + "Failed...\n";
-					std::cout << "Closing Connection With " + TempClient.second + "...\n";
-					CloseClient(TempClient.first);
-				}
-			}
-		}
-	}
+    std::cout << message << std::endl;
+
+    std::vector<int> failedClients;
+
+    {
+      std::lock_guard<std::mutex> lock(_clientsMutex);
+      for (const auto &tempClient : _activeClients) {
+        if (tempClient.first != client) {
+          int returnCode =
+              send(tempClient.first, message.c_str(), message.length(), 0);
+
+          if (returnCode == -1) {
+            std::cout << "Sending message to " + tempClient.second +
+                             " Failed...\n";
+            std::cout << "Closing Connection With " + tempClient.second +
+                             "...\n";
+            failedClients.push_back(tempClient.first);
+          }
+        }
+      }
+    }
+
+    for (int failed : failedClients) {
+      CloseClient(failed);
+    }
+  }
 }
 
-void Server::CreateSocket() {
-	Socket = socket(AF_INET, SOCK_STREAM, 0);
+void Server::_createSocket() {
+  _socket = socket(AF_INET, SOCK_STREAM, 0);
 
-	if (Socket == INVALID_SOCKET) {
-		std::cout << "ListenSocket Creation failed..." << std::endl;
-		CloseProgram();
-	}
+  if (_socket == -1) {
+    std::cout << "ListenSocket Creation failed..." << std::endl;
+    _closeProgram();
+  }
 }
 
-void Server::CreateSocketAddress(const WCHAR* IPAddress, u_short PORT) {
-	SocketAddress.sin_family = AF_INET;
-	SocketAddress.sin_port = htons(PORT);
+void Server::_createSocketAddress(const char *ipAddress, uint16_t port) {
+  _socketAddress.sin_family = AF_INET;
+  _socketAddress.sin_port = htons(port);
 
-	//Filling IP Address
-	if (InetPton(AF_INET, IPAddress, &SocketAddress.sin_addr) != 1) {
-		std::cout << "Setting IP Address failed..." << std::endl;
-		CloseProgram();
-	}
+  if (inet_pton(AF_INET, ipAddress, &_socketAddress.sin_addr) != 1) {
+    std::cout << "Setting IP Address failed..." << std::endl;
+    _closeProgram();
+  }
 }
 
-void Server::BindAddressToSocket() {
-	if (bind(Socket, reinterpret_cast<sockaddr*>(&SocketAddress), sizeof(SocketAddress)) == SOCKET_ERROR) {
-		std::cout << "Binding ServerAddress to ListenSocket failed..." << std::endl;
-		CloseProgram();
-	}
+void Server::_bindAddressToSocket() {
+  if (bind(_socket, reinterpret_cast<sockaddr *>(&_socketAddress),
+           sizeof(_socketAddress)) == -1) {
+    std::cout << "Binding ServerAddress to ListenSocket failed..." << std::endl;
+    _closeProgram();
+  }
 }
 
-void Server::Initialize() {
-	WSADATA Data;
-	if (WSAStartup(MAKEWORD(2, 2), &Data) != 0) {
-		std::cout << "Server Initialization failed..." << std::endl;
-		std::cout << "Closing the program..." << std::endl;
-		std::exit(0);
-	};
-}
-
-void Server::CleanUp() {
-	WSACleanup();
-}
-
-void Server::CloseProgram() {
-	std::cout << "Closing the program..." << std::endl;
-	closesocket(Socket);
-	CleanUp();
-	std::exit(0);
+void Server::_closeProgram() {
+  std::cout << "Closing the program..." << std::endl;
+  if (_socket >= 0) {
+    close(_socket);
+    _socket = -1;
+  }
+  std::exit(0);
 }

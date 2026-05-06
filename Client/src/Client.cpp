@@ -1,117 +1,103 @@
+#include "inc/Client.h"
 #include <iostream>
 #include <string>
-#include "include/Client.h"
 
-void Client::SetSocket(SOCKET NewSocket) {
-	Socket = NewSocket;
-}
+void Client::SetSocket(int newSocket) { _socket = newSocket; }
 
-SOCKET Client::GetSocket() const {
-	return Socket;
-}
+int Client::GetSocket() const { return _socket; }
 
-void Client::ConnectToServer(const WCHAR* IPAddress, u_short PORT) {
-	CreateSocket();
-	CreateServerAddress(IPAddress, PORT);
+void Client::ConnectToServer(const char *ipAddress, uint16_t port) {
+  _createSocket();
+  _createServerAddress(ipAddress, port);
 
-	if (connect(Socket, reinterpret_cast<sockaddr*>(&ServerAddress), sizeof(ServerAddress)) == SOCKET_ERROR) {
-		std::cout << "Server Connection failed..." << std::endl;
-		CloseProgram();
-	}
+  if (connect(_socket, reinterpret_cast<sockaddr *>(&_serverAddress),
+              sizeof(_serverAddress)) == -1) {
+    std::cout << "Server Connection failed..." << std::endl;
+    _closeProgram();
+  }
 
-	std::cout << "Successfully Connected to Server on PORT : " << PORT << std::endl;
+  std::cout << "Successfully Connected to Server on PORT : " << port
+            << std::endl;
 
-	std::string Message;
-	std::cout << "Enter Your Chat Name : ";
-	std::getline(std::cin, Message);
+  std::string message;
+  std::cout << "Enter Your Chat Name : ";
+  std::getline(std::cin, message);
 
-	int ReturnCode = send(Socket, Message.c_str(), Message.length(), 0);
+  int returnCode = send(_socket, message.c_str(), message.length(), 0);
 
-	if (ReturnCode == SOCKET_ERROR) {
-		std::cout << "Message Sending Failed...\n";
-		closesocket(Socket);
-		CleanUp();
-	}
+  if (returnCode == -1) {
+    std::cout << "Message Sending Failed...\n";
+    close(_socket);
+    _socket = -1;
+  }
 }
 
 void Client::SendMessages() {
-	std::string Message;
-	while (true) {
-		std::getline(std::cin, Message);
+  std::string message;
+  while (true) {
+    std::getline(std::cin, message);
 
-		if (Message == "/quit") {
-			break;
-		}
+    if (message == "/quit") {
+      break;
+    }
 
-		int ReturnCode = send(Socket, Message.c_str(), Message.length(), 0);
+    int returnCode = send(_socket, message.c_str(), message.length(), 0);
 
-		if (ReturnCode == SOCKET_ERROR) {
-			std::cout << "Message Sending Failed...\n";
-			break;
-		}
-	}
-	closesocket(Socket);
-	CleanUp();
+    if (returnCode == -1) {
+      std::cout << "Message Sending Failed...\n";
+      break;
+    }
+  }
+  close(_socket);
+  _socket = -1;
 }
 
 void Client::ReceiveMessages() {
-	char Buffer[4096];
+  char buffer[4096];
 
-	while (true) {
-		int BytesReceived = recv(Socket, Buffer, sizeof(Buffer), 0);
+  while (true) {
+    int bytesReceived = recv(_socket, buffer, sizeof(buffer), 0);
 
-		if (BytesReceived <= 0) {
-			std::cout << "Error Receiving Message..." << std::endl;
-			break;
-		}
+    if (bytesReceived <= 0) {
+      std::cout << "Error Receiving Message..." << std::endl;
+      break;
+    }
 
-		std::string Message(Buffer, BytesReceived);
-		std::cout << Message << std::endl;
-	}
-	closesocket(Socket);
-	CleanUp();
+    std::string message(buffer, bytesReceived);
+    std::cout << message << std::endl;
+  }
+  close(_socket);
+  _socket = -1;
 }
 
-void Client::CreateSocket() {
-	Socket = socket(AF_INET, SOCK_STREAM, 0);
+void Client::_createSocket() {
+  _socket = socket(AF_INET, SOCK_STREAM, 0);
 
-	if (Socket == INVALID_SOCKET) {
-		std::cout << "Socket Creation failed..." << std::endl;
-		CloseProgram();
-	}
+  if (_socket == -1) {
+    std::cout << "Socket Creation failed..." << std::endl;
+    _closeProgram();
+  }
 }
 
-void Client::CreateServerAddress(const WCHAR* IPAddress, u_short PORT) {
-	ServerAddress.sin_family = AF_INET;
-	ServerAddress.sin_port = htons(PORT);
+void Client::_createServerAddress(const char *ipAddress, uint16_t port) {
+  _serverAddress.sin_family = AF_INET;
+  _serverAddress.sin_port = htons(port);
 
-	//Filling IP Address
-	if (InetPton(AF_INET, IPAddress, &ServerAddress.sin_addr) != 1) {
-		std::cout << "Setting IP Address failed..." << std::endl;
-		CloseProgram();
-	}
+  if (inet_pton(AF_INET, ipAddress, &_serverAddress.sin_addr) != 1) {
+    std::cout << "Setting IP Address failed..." << std::endl;
+    _closeProgram();
+  }
 }
 
-void Client::Initialize() {
-	WSADATA Data;
-	if (WSAStartup(MAKEWORD(2, 2), &Data) != 0) {
-		std::cout << "Client Initialization failed..." << std::endl;
-		std::cout << "Closing the program..." << std::endl;
-		std::exit(0);
-	};
+void Client::_closeProgram() {
+  std::cout << "Closing the program..." << std::endl;
+  if (_socket >= 0) {
+    close(_socket);
+    _socket = -1;
+  }
+  std::exit(0);
 }
 
-void Client::CleanUp() {
-	WSACleanup();
-}
-
-void Client::CloseProgram() {
-	std::cout << "Closing the program..." << std::endl;
-	closesocket(Socket);
-	CleanUp();
-	std::exit(0);
-}
-
-bool operator==(const Client& Client1, const Client& Client2) {
-	return (Client1.GetSocket() == Client2.GetSocket());
+bool operator==(const Client &client1, const Client &client2) {
+  return (client1.GetSocket() == client2.GetSocket());
 }

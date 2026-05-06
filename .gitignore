@@ -1,3 +1,8 @@
-.vs/
-bin/
-bin-int/
+# CMake build directory
+build/
+cmake-build-*/
+
+# Compiled binaries
+*.o
+*.a
+*.so
